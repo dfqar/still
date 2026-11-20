@@ -1,0 +1,101 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 77;
+	objects = {
+
+		A10000000000000000000001 /* StillApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StillApp.swift; sourceTree = "<group>"; };
+		A10000000000000000000002 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		A10000000000000000000003 /* EngineController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineController.swift; sourceTree = "<group>"; };
+		A10000000000000000000004 /* MetalHostView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalHostView.swift; sourceTree = "<group>"; };
+		A10000000000000000000005 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A10000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000007 /* Still-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Still-Bridging-Header.h"; sourceTree = "<group>"; };
+		A10000000000000000000008 /* libstill_ffi.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libstill_ffi.a; sourceTree = "<group>"; };
+		A10000000000000000000009 /* Still.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Still.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+
+		A20000000000000000000001 /* StillApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001; };
+		A20000000000000000000002 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002; };
+		A20000000000000000000003 /* EngineController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003; };
+		A20000000000000000000004 /* MetalHostView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000004; };
+		A20000000000000000000005 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005; };
+		A20000000000000000000006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000010; };
+
+		A30000000000000000000001 = {
+			isa = PBXGroup;
+			children = (A30000000000000000000002 /* macOS */, A30000000000000000000000003 /* Rust Products */, A30000000000000000000000004 /* Products */);
+			sourceTree = "<group>";
+		};
+		A30000000000000000000002 /* macOS */ = {
+			isa = PBXGroup;
+			path = macOS;
+			children = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000010);
+			sourceTree = "<group>";
+		};
+		A30000000000000000000003 /* Rust Products */ = {isa = PBXGroup; path = target/release; children = (A10000000000000000000008); sourceTree = SOURCE_ROOT; };
+		A30000000000000000000004 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000009); name = Products; sourceTree = "<group>"; };
+
+		A40000000000000000000001 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A20000000000000000000005); runOnlyForDeploymentPostprocessing = 0; };
+		A40000000000000000000002 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A20000000000000000000006); runOnlyForDeploymentPostprocessing = 0; };
+		A40000000000000000000004 /* Build Rust Core */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			name = "Build Rust Core";
+			inputPaths = ("$(SRCROOT)/Cargo.toml", "$(SRCROOT)/Cargo.lock");
+			outputPaths = ("$(SRCROOT)/target/release/libstill_ffi.a");
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/build-rust.sh\"\n";
+		};
+
+		A50000000000000000000001 /* Still */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A70000000000000000000002;
+			buildPhases = (A40000000000000000000004, A40000000000000000000001, A40000000000000000000002, A40000000000000000000003);
+			buildRules = ();
+			dependencies = ();
+			name = Still;
+			productName = Still;
+			productReference = A10000000000000000000009;
+			productType = "com.apple.product-type.application";
+		};
+
+		A60000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2660; LastUpgradeCheck = 2660; TargetAttributes = {A50000000000000000000001 = {CreatedOnToolsVersion = 26.0; };};};
+			buildConfigurationList = A70000000000000000000001;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = A30000000000000000000001;
+			productRefGroup = A30000000000000000000004;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A50000000000000000000001);
+		};
+
+		A70000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000001, A80000000000000000000002); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A70000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000003, A80000000000000000000004); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A80000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; name = Debug; buildSettings = {CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 5.0;};};
+		A80000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; name = Release; buildSettings = {CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 5.0;};};
+		A80000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; name = Debug; buildSettings = {
+			ARCHS = arm64; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGNING_ALLOWED = NO; CURRENT_PROJECT_VERSION = 5; ENABLE_HARDENED_RUNTIME = NO; ENABLE_USER_SCRIPT_SANDBOXING = NO;
+			GENERATE_INFOPLIST_FILE = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/include"; INFOPLIST_FILE = macOS/Info.plist;
+			MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 2.2;
+			OTHER_LDFLAGS = ("\"$(SRCROOT)/target/release/libstill_ffi.a\"", "-framework", Metal, "-framework", QuartzCore, "-framework", CoreGraphics, "-framework", Foundation, "-framework", AppKit, "-framework", IOKit, "-framework", IOSurface, "-framework", Security, "-lc++");
+			CLANG_MODULE_CACHE_PATH = "$(SRCROOT)/build/module-cache"; PRODUCT_BUNDLE_IDENTIFIER = app.still.Drift; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_OBJC_BRIDGING_HEADER = "macOS/Still-Bridging-Header.h"; SWIFT_VERSION = 5.0;
+		};};
+		A80000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; name = Release; buildSettings = {
+			ARCHS = arm64; ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGNING_ALLOWED = NO; COPY_PHASE_STRIP = YES; CURRENT_PROJECT_VERSION = 5; DEAD_CODE_STRIPPING = YES; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; DEPLOYMENT_POSTPROCESSING = YES; ENABLE_HARDENED_RUNTIME = YES; ENABLE_USER_SCRIPT_SANDBOXING = NO;
+			GENERATE_INFOPLIST_FILE = NO; HEADER_SEARCH_PATHS = "$(SRCROOT)/include"; INFOPLIST_FILE = macOS/Info.plist;
+			MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 2.2;
+			OTHER_LDFLAGS = ("\"$(SRCROOT)/target/release/libstill_ffi.a\"", "-framework", Metal, "-framework", QuartzCore, "-framework", CoreGraphics, "-framework", Foundation, "-framework", AppKit, "-framework", IOKit, "-framework", IOSurface, "-framework", Security, "-lc++");
+			CLANG_MODULE_CACHE_PATH = "$(SRCROOT)/build/module-cache"; PRODUCT_BUNDLE_IDENTIFIER = app.still.Drift; PRODUCT_NAME = "$(TARGET_NAME)"; STRIP_INSTALLED_PRODUCT = YES; STRIP_STYLE = all; SWIFT_OBJC_BRIDGING_HEADER = "macOS/Still-Bridging-Header.h"; SWIFT_OPTIMIZATION_LEVEL = "-O"; SWIFT_VERSION = 5.0;
+		};};
+	};
+	rootObject = A60000000000000000000001;
+}

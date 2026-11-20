@@ -1,0 +1,6 @@
+language = "C"
+include_guard = "STILL_H"
+pragma_once = true
+usize_is_size_t = true
+documentation = true
+header = "/* Generated from still-ffi. Do not edit by hand. */"

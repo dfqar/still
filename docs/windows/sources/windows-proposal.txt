@@ -1,0 +1,1493 @@
+Да. Для Windows-версии **Still** я бы уже зафиксировал довольно конкретную архитектуру: **WinUI 3/.NET 10 как нативная оболочка + Rust как движок + wgpu/DX12 как renderer + `SwapChainPanel` как место, куда Rust рисует**.
+
+Причём это не компромиссный костыль: `SwapChainPanel` как раз предназначен для размещения DirectX-контента внутри XAML-интерфейса, а актуальный `wgpu` имеет отдельный DX12 `SurfaceTargetUnsafe::SwapChainPanel`. :chatgpt-content-reference{index="0"}
+
+## 1. Общая архитектура Windows
+
+Я бы строил её так:
+
+```text
+┌──────────────────────────────────────────────────────────┐
+│                     Still.exe                            │
+│                                                          │
+│  C# / .NET 10 / WinUI 3                                 │
+│                                                          │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ MainWindow                                         │  │
+│  │                                                    │  │
+│  │ ┌────────────────────────────────────────────────┐ │  │
+│  │ │ SwapChainPanel                                 │ │  │
+│  │ │                                                │ │  │
+│  │ │              STILL RENDERER                    │ │  │
+│  │ │                                                │ │  │
+│  │ └────────────────────────────────────────────────┘ │  │
+│  │                                                    │  │
+│  │        XAML overlay / controls / settings           │  │
+│  └────────────────────────────────────────────────────┘  │
+│                         │                                │
+│                      P/Invoke                            │
+│                         │                                │
+│  ┌──────────────────────▼─────────────────────────────┐  │
+│  │                 still_engine.dll                   │  │
+│  │                       Rust                         │  │
+│  │                                                    │  │
+│  │  Core → Scene System → Simulation → Renderer       │  │
+│  │                                  ↓                 │  │
+│  │                                wgpu                │  │
+│  │                                  ↓                 │  │
+│  │                             DirectX 12             │  │
+│  └────────────────────────────────────────────────────┘  │
+│                         │                                │
+│                         ▼                                │
+│                        GPU                               │
+└──────────────────────────────────────────────────────────┘
+```
+
+WinUI 3 остаётся **настоящим хозяином Windows-приложения**: окна, title bar, XAML, системные диалоги, клавиатура, accessibility, настройки, lifecycle. Microsoft и сейчас рекомендует WinUI 3 как нативный UI-framework для новых Windows desktop apps. :chatgpt-content-reference{index="1"}
+
+Для C# я бы сейчас брал **.NET 10 LTS**: на октябрь 2026 это актуальный LTS с поддержкой до ноября 2028. :chatgpt-content-reference{index="2"}
+
+---
+
+# 2. Кто за что отвечает
+
+Ключевой принцип:
+
+> **Windows знает, что такое окно. Rust не знает.  
+> Rust знает, что такое сцена. Windows не знает.**
+
+То есть WinUI не должен знать:
+
+```text
+Particle
+VectorField
+NoiseGenerator
+RenderPipeline
+StorageBuffer
+WGSL shader
+```
+
+А Rust не должен знать:
+
+```text
+SettingsFlyout
+NavigationView
+Window titlebar
+AppWindow
+WinUI Button
+Windows Settings
+```
+
+Граница должна быть очень узкой.
+
+### Windows layer
+
+```text
+Still.Windows
+
+App.xaml
+MainWindow.xaml
+
+WindowManager
+InputAdapter
+RenderHost
+SettingsViewModel
+NativeEngine
+Persistence
+WindowsLifecycle
+```
+
+### Rust
+
+```text
+still-core
+still-render
+still-scenes
+still-scene-drift
+still-ffi
+```
+
+---
+
+# 3. Самое важное — `SwapChainPanel`
+
+В XAML я бы сделал примерно такую композицию:
+
+```text
+Grid
+│
+├── SwapChainPanel       ← Rust/wgpu рисует сюда
+│
+├── InteractionLayer     ← обработка pointer/touch
+│
+└── Overlay
+    ├── Scene title
+    ├── sliders
+    ├── performance menu
+    └── settings button
+```
+
+То есть не:
+
+```text
+WinUI
+↓
+картинка от Rust
+```
+
+а буквально:
+
+```text
+          XAML
+
+        Settings
+           │
+           │
+   ┌───────▼─────────┐
+   │                 │
+   │  SwapChainPanel │
+   │                 │
+   │    DX12 image   │
+   │                 │
+   └─────────────────┘
+```
+
+Microsoft прямо проектирует `SwapChainPanel` для DirectX-контента внутри XAML visual tree; поверх него можно располагать обычные XAML controls. :chatgpt-content-reference{index="3"}
+
+А `wgpu` сейчас умеет:
+
+```rust
+SurfaceTargetUnsafe::SwapChainPanel(...)
+```
+
+то есть может сделать surface непосредственно из такого WinUI-контрола. `wgpu` при этом удерживает ссылку на panel на время жизни surface. :chatgpt-content-reference{index="4"}
+
+Это сильно чище, чем создавать отдельный Win32 child HWND.
+
+---
+
+# 4. Почему именно DX12 на Windows
+
+Здесь я бы **не пытался поддерживать Vulkan и DX12 одновременно**.
+
+Windows-версия:
+
+```text
+wgpu
+ ↓
+DX12
+```
+
+macOS:
+
+```text
+wgpu
+ ↓
+Metal
+```
+
+Android/Linux:
+
+```text
+wgpu
+ ↓
+Vulkan
+```
+
+Сам `wgpu` остаётся общим API и поддерживает D3D12, Metal и Vulkan. :chatgpt-content-reference{index="5"}
+
+Это значит, что Drift всё равно выглядит так:
+
+```rust
+renderer.render(scene);
+```
+
+а не:
+
+```rust
+if windows {
+    dx12_render();
+}
+
+if mac {
+    metal_render();
+}
+```
+
+**DX12 вообще не должен проникать в код сцены.**
+
+Windows-specific код нужен только примерно здесь:
+
+```text
+still-platform-windows
+        ↓
+create Windows surface
+        ↓
+wgpu::Surface
+```
+
+И всё.
+
+---
+
+# 5. FFI между C# и Rust
+
+Вот тут я бы **не использовал UniFFI для Windows**.
+
+UniFFI официально прежде всего ориентирован на Swift, Kotlin и Python; C# bindings остаются сторонним направлением. :chatgpt-content-reference{index="6"}
+
+Для Windows лучше:
+
+```text
+C ABI
++
+P/Invoke
+```
+
+При желании C# bindings автоматически генерировать через `csbindgen`, который именно для этого и существует: Rust `extern "C"` → C# P/Invoke. :chatgpt-content-reference{index="7"}
+
+---
+
+## API между Windows и Rust должен быть маленьким
+
+Примерно:
+
+```text
+still_create(...)
+still_destroy(...)
+
+still_render_frame(...)
+
+still_resize(...)
+
+still_pointer_move(...)
+still_pointer_down(...)
+still_pointer_up(...)
+
+still_set_parameter(...)
+
+still_set_scene(...)
+
+still_suspend(...)
+still_resume(...)
+```
+
+Не надо отдавать C# такие вещи как:
+
+```text
+Particle*
+Renderer*
+wgpu::Device*
+Scene*
+Vec<Particle>
+```
+
+Никогда.
+
+C# получает один opaque handle:
+
+```text
+StillEngine*
+```
+
+условно:
+
+```csharp
+nint engine;
+```
+
+И дальше:
+
+```text
+C#
+
+StillSetParameter(engine, FLOW, 0.7)
+                    │
+                    ▼
+Rust
+
+Engine
+ └── current_scene
+       └── set_parameter()
+```
+
+---
+
+# 6. Создание приложения
+
+Sequence при запуске я бы сделал таким:
+
+```text
+Windows запускает Still.exe
+        ↓
+App.OnLaunched
+        ↓
+создаётся MainWindow
+        ↓
+создаётся SwapChainPanel
+        ↓
+Window.Activate()
+        ↓
+SwapChainPanel.Loaded
+        ↓
+получаем native COM pointer панели
+        ↓
+still_create_windows(...)
+        ↓
+Rust создаёт wgpu Instance
+        ↓
+SurfaceTargetUnsafe::SwapChainPanel
+        ↓
+ищем DX12 Adapter
+        ↓
+Device + Queue
+        ↓
+Surface.configure()
+        ↓
+Drift.init()
+        ↓
+начинается render loop
+```
+
+WinUI/WinRT-объект можно передать на native-сторону через C#/WinRT interop, который предоставляет доступ к underlying COM `IObjectReference`; старые варианты с обычным `Marshal.GetIUnknownForObject` для WinRT Microsoft рекомендует не использовать в таком сценарии. :chatgpt-content-reference{index="8"}
+
+---
+
+# 7. Где должен находиться render loop
+
+Здесь есть два варианта.
+
+Для **Still 0.1 я бы намеренно выбрал самый простой**:
+
+```text
+WinUI CompositionTarget.Rendering
+                 ↓
+          still_render_frame()
+                 ↓
+               Rust
+                 ↓
+               GPU
+```
+
+У WinUI есть специальный `CompositionTarget.Rendering`; Microsoft прямо указывает DirectX interop как один из сценариев его использования. :chatgpt-content-reference{index="9"}
+
+Получается:
+
+```text
+UI thread
+│
+│ CompositionTarget.Rendering
+│
+├── calculate Δt
+│
+└── Rust render_frame(dt)
+          │
+          ├── update scene
+          ├── compute pass
+          ├── render pass
+          └── present
+```
+
+### Почему не отдельный render thread сразу
+
+Потому что для Drift:
+
+- simulation идёт преимущественно на GPU;
+- CPU работы мало;
+- 10–30k particles — вообще небольшая задача;
+- XAML UI минимальный.
+
+Отдельный render thread сразу принесёт больше проблем с:
+
+- resize;
+- lifetime;
+- synchronization;
+- SwapChainPanel;
+- surface reconfiguration;
+- shutdown;
+- device lost.
+
+И практически ничего не даст.
+
+---
+
+## Но архитектуру готовим под отдельный render thread
+
+Позже:
+
+```text
+UI thread                    Render thread
+
+Pointer ─────┐
+Resize ──────┤
+Settings ────┤
+             ↓
+        CommandQueue ──────────────► Engine
+                                      │
+                                      ↓
+                                  Simulation
+                                      ↓
+                                     GPU
+```
+
+Важно, что даже если мы сначала рендерим через UI callback, **Engine API уже не зависит от этого решения**.
+
+---
+
+# 8. Почему `CompositionTarget.Rendering` нельзя оставлять работать постоянно
+
+Потому что обработчик запускается каждый кадр на UI thread и заставляет UI-thread постоянно работать, что увеличивает энергопотребление. Microsoft прямо предупреждает об этом. :chatgpt-content-reference{index="10"}
+
+Поэтому:
+
+```text
+Window visible
+→ Rendering subscribed
+
+Window minimized
+→ Rendering unsubscribed
+
+Window hidden
+→ Rendering unsubscribed
+
+Monitor off / suspend
+→ renderer suspended
+
+Window active again
+→ Rendering subscribed
+```
+
+Для Still это особенно важно — иначе красивый ambient app будет бессмысленно жрать батарею.
+
+---
+
+# 9. Drift на Windows
+
+Для первой сцены я бы **сразу делал GPU simulation**.
+
+Не так:
+
+```text
+C# calculates particles
+↓
+Rust
+↓
+GPU
+```
+
+и даже не:
+
+```text
+Rust CPU calculates 30k particles
+↓
+uploads 30k particles every frame
+↓
+GPU
+```
+
+А:
+
+```text
+         GPU
+
+ParticleBuffer A
+       │
+       ▼
+Compute shader
+       │
+       ▼
+ParticleBuffer B
+       │
+       ▼
+Render pipeline
+       │
+       ▼
+screen
+```
+
+Например частица:
+
+```rust
+struct Particle {
+    position: vec2<f32>,
+    velocity: vec2<f32>,
+    age: f32,
+    seed: f32,
+}
+```
+
+примерно 24–32 байта после alignment.
+
+Для 30 000 частиц:
+
+```text
+~1 MB
+```
+
+то есть совершенно ничтожный объём для современной GPU.
+
+Даже 100–500 тыс. позже вполне реалистичны.
+
+---
+
+# 10. Frame pipeline
+
+Каждый кадр:
+
+```text
+CompositionTarget.Rendering
+             │
+             ▼
+         render(dt)
+             │
+             ▼
+┌─────────────────────────┐
+│ update FrameUniforms    │
+│                         │
+│ time                    │
+│ delta                   │
+│ pointer                 │
+│ viewport                │
+│ density                 │
+│ flow                    │
+│ speed                   │
+└───────────┬─────────────┘
+            ↓
+      Compute Pass
+            ↓
+   update particles
+            ↓
+      Render Pass
+            ↓
+    particle trails
+            ↓
+     Post Processing
+            ↓
+        Present
+```
+
+CPU каждый кадр передаёт буквально несколько десятков/сотен байт uniform data.
+
+---
+
+# 11. Pointer interaction
+
+WinUI ловит:
+
+```text
+PointerMoved
+PointerPressed
+PointerReleased
+PointerWheelChanged
+```
+
+и переводит всё в **универсальную модель Still**:
+
+```rust
+InputEvent {
+    pointer: Vec2,
+    pressure: f32,
+    kind: PointerKind,
+    phase: PointerPhase,
+}
+```
+
+Rust не должен знать:
+
+```text
+PointerRoutedEventArgs
+Microsoft.UI.Xaml.Input
+MouseEvent
+```
+
+Поэтому в будущем:
+
+```text
+Windows mouse
+           \
+iPhone touch ──► Still Input
+           /
+Android touch
+```
+
+одинаково работает с Drift.
+
+---
+
+# 12. Pointer не двигает частицы напрямую
+
+Лучше:
+
+```text
+mouse
+ ↓
+attractor / force field
+ ↓
+compute shader
+ ↓
+particle acceleration
+```
+
+Например:
+
+\[
+F = \frac{k}{r^2 + \epsilon}
+\]
+
+но с плавным falloff:
+
+```text
+pointer
+   ●
+
+      → ·
+    → ·
+  → ·
+
+       · →→→
+```
+
+Можно сделать несколько режимов:
+
+```text
+Attract
+Repel
+Distort
+Vortex
+```
+
+Но UI пользователю необязательно это показывать сразу.
+
+---
+
+# 13. Vector field
+
+Для Drift:
+
+```text
+position
+   ↓
+noise(position × scale + time)
+   ↓
+angle
+   ↓
+direction
+```
+
+Пример:
+
+\[
+\theta =
+noise(x \cdot s,\ y \cdot s,\ t) \cdot 2\pi
+\]
+
+\[
+v =
+(\cos \theta,\sin \theta)
+\]
+
+И:
+
+\[
+p_{t+1}=p_t + v\Delta t
+\]
+
+Можно делать multi-octave noise/fBm:
+
+\[
+N(p)=
+N(p)
++0.5N(2p)
++0.25N(4p)
++...
+\]
+
+Это всё WGSL compute shader.
+
+---
+
+# 14. Trails
+
+Это один из моментов, который решит, выглядит Still красиво или как школьный particle simulator.
+
+Не очищаем framebuffer полностью.
+
+Делаем:
+
+```text
+previous frame
+      ↓
+slight fade
+      ↓
+new particles
+      ↓
+new frame
+```
+
+Например:
+
+```text
+Frame N
+   ↓
+offscreen texture A
+   ↓
+fade shader
+   ↓
+texture B
+   ↓
+draw particles
+   ↓
+postprocess
+```
+
+Следующий кадр меняем A/B местами.
+
+Это обычный ping-pong:
+
+```text
+Frame 1
+A → B
+
+Frame 2
+B → A
+
+Frame 3
+A → B
+```
+
+Так получаются красивые шлейфы.
+
+---
+
+# 15. UI и renderer вообще не смешиваем
+
+Допустим пользователь двигает:
+
+```text
+Flow
+━━━━━━○━━━
+```
+
+WinUI делает:
+
+```text
+Slider.ValueChanged
+       ↓
+NativeEngine.SetParameter(
+    Parameter.Flow,
+    0.63
+)
+```
+
+Rust:
+
+```text
+Engine
+ ↓
+ParameterStore
+ ↓
+Drift
+ ↓
+FrameUniforms
+ ↓
+GPU
+```
+
+Никаких вызовов C# из shader/renderer.
+
+---
+
+# 16. Resize и DPI
+
+Windows здесь важен из-за scaling.
+
+XAML работает в effective pixels/DIPs, а GPU нужен физический размер framebuffer.
+
+Условно:
+
+```text
+SwapChainPanel
+1280 × 720 DIP
+
+scale = 1.5
+
+Surface
+1920 × 1080 px
+```
+
+Поэтому Windows shell передаёт движку:
+
+```text
+logicalWidth
+logicalHeight
+scaleFactor
+physicalWidth
+physicalHeight
+```
+
+При resize:
+
+```text
+SwapChainPanel.SizeChanged
+         ↓
+calculate physical size
+         ↓
+still_resize()
+         ↓
+Surface.configure()
+         ↓
+scene.resize()
+```
+
+Те же различия DPI/physical pixels присутствуют и при обычной работе WinUI с HWND; документация Microsoft отдельно обращает внимание на разницу effective и physical pixels. :chatgpt-content-reference{index="11"}
+
+---
+
+# 17. Surface configuration
+
+Для начала я бы брал примерно такую философию:
+
+```text
+format:
+preferred sRGB
+
+present:
+vsync
+
+maximum frames in flight:
+2
+
+HDR:
+off
+
+MSAA:
+probably off initially
+```
+
+`wgpu` поддерживает несколько present modes, включая синхронизированные и immediate/mailbox варианты. :chatgpt-content-reference{index="12"}
+
+Но для Still:
+
+**VSync важнее минимальной latency.**
+
+Это не соревновательная игра.
+
+Нам нужны:
+
+```text
+smooth motion
+no tearing
+stable frame pacing
+low power usage
+```
+
+а не:
+
+```text
+2 ms input latency
+```
+
+---
+
+# 18. 60 / 120 Гц
+
+Не надо в коде делать:
+
+```text
+sleep(16.666 ms)
+```
+
+или тем более:
+
+```text
+fixed 60 fps
+```
+
+Simulation должна использовать:
+
+```text
+delta_time
+```
+
+Тогда:
+
+```text
+60 Hz
+dt ≈ 16.7 ms
+
+120 Hz
+dt ≈ 8.3 ms
+
+144 Hz
+dt ≈ 6.9 ms
+```
+
+сцена физически движется с одинаковой скоростью.
+
+А frame pacing предоставляет compositor/presentation layer.
+
+`RenderingEventArgs.RenderingTime` у WinUI можно использовать для измерений времени рендера. :chatgpt-content-reference{index="13"}
+
+---
+
+# 19. Очень важный момент — fixed simulation time
+
+Некоторые части scene simulation лучше не полностью привязывать к нестабильному `dt`.
+
+Например:
+
+```text
+rendering:
+variable timestep
+
+physics:
+fixed timestep
+```
+
+Допустим:
+
+```text
+simulation step = 1 / 120 s
+```
+
+Если пришло:
+
+```text
+dt = 16.6 ms
+```
+
+делаем два шага.
+
+Если:
+
+```text
+dt = 8.3 ms
+```
+
+один.
+
+Это даст одинаковое поведение Drift при разных refresh rates.
+
+Но для первой простейшей procedural сцены variable dt тоже приемлем.
+
+---
+
+# 20. Device lost / surface lost
+
+Это сразу стоит архитектурно предусмотреть.
+
+Состояния renderer:
+
+```text
+Uninitialized
+     ↓
+Initializing
+     ↓
+Running
+     ↓
+Suspended
+     ↓
+Recovering
+     ↓
+Running
+```
+
+А не:
+
+```text
+wgpu error
+→ panic
+→ Still.exe умер
+```
+
+WinUI имеет `SurfaceContentsLost` именно для сценариев, где DirectX surface необходимо восстановить после серьёзного изменения underlying graphics state. :chatgpt-content-reference{index="14"}
+
+Сам wgpu также возвращает состояния вроде:
+
+```text
+Outdated
+Lost
+Occluded
+Timeout
+```
+
+при получении surface texture. :chatgpt-content-reference{index="15"}
+
+Поэтому renderer:
+
+```text
+Lost
+→ recreate/reconfigure surface
+
+Outdated
+→ resize/reconfigure
+
+Occluded
+→ skip frame
+
+Timeout
+→ skip + log
+```
+
+---
+
+# 21. Что хранится в C#, а что в Rust
+
+Я бы провёл границу так:
+
+| Данные | Windows/C# | Rust |
+|---|---:|---:|
+| Размер окна | ✓ | копия |
+| Позиция окна | ✓ | — |
+| Fullscreen | ✓ | — |
+| Тема Windows | ✓ | — |
+| UI state | ✓ | — |
+| Scene | — | ✓ |
+| Particle data | — | ✓ |
+| GPU buffers | — | ✓ |
+| Shaders | — | ✓ |
+| Noise | — | ✓ |
+| Time simulation | — | ✓ |
+| Input | source | normalized |
+| Scene parameters | UI copy | authoritative |
+| Presets | presentation | model |
+| Audio analysis позже | source | processing/modulation |
+
+То есть **источником истины для сцены является Rust**.
+
+---
+
+# 22. Структура Rust-проекта
+
+Вот здесь я бы уже не делал один гигантский `core`.
+
+```text
+still/
+│
+├── Cargo.toml
+│
+├── crates/
+│   │
+│   ├── still-core/
+│   │   ├── engine.rs
+│   │   ├── input.rs
+│   │   ├── time.rs
+│   │   ├── params.rs
+│   │   └── scene.rs
+│   │
+│   ├── still-render/
+│   │   ├── renderer.rs
+│   │   ├── gpu.rs
+│   │   ├── surface.rs
+│   │   ├── textures.rs
+│   │   ├── buffers.rs
+│   │   └── pipeline.rs
+│   │
+│   ├── still-scenes/
+│   │   └── registry.rs
+│   │
+│   ├── still-scene-drift/
+│   │   ├── drift.rs
+│   │   ├── particles.rs
+│   │   └── parameters.rs
+│   │
+│   ├── still-platform-windows/
+│   │   └── surface.rs
+│   │
+│   └── still-ffi/
+│       └── windows.rs
+│
+├── shaders/
+│   ├── common/
+│   └── drift/
+│       ├── simulate.wgsl
+│       ├── particles.wgsl
+│       ├── fade.wgsl
+│       └── composite.wgsl
+│
+└── platforms/
+    └── windows/
+        └── Still.Windows/
+```
+
+Особенно важен вот этот момент:
+
+```text
+still-core
+```
+
+**не зависит от**
+
+```text
+still-platform-windows
+```
+
+Никогда.
+
+Иначе потом получим:
+
+```text
+core
+ └── Windows-specific code
+       └── macOS port pain
+```
+
+---
+
+# 23. Windows project
+
+Внутри:
+
+```text
+Still.Windows/
+│
+├── App.xaml
+├── App.xaml.cs
+│
+├── MainWindow.xaml
+├── MainWindow.xaml.cs
+│
+├── Views/
+│   ├── SceneOverlay.xaml
+│   └── SettingsPage.xaml
+│
+├── ViewModels/
+│
+├── Engine/
+│   ├── NativeEngine.cs
+│   ├── NativeMethods.g.cs
+│   ├── InputAdapter.cs
+│   └── RenderLoop.cs
+│
+├── Services/
+│   ├── SettingsService.cs
+│   ├── WindowService.cs
+│   └── LifecycleService.cs
+│
+└── Assets/
+```
+
+---
+
+# 24. FFI DLL
+
+Rust собирается как:
+
+```text
+still_engine.dll
+```
+
+то есть:
+
+```toml
+crate-type = ["cdylib"]
+```
+
+Windows shell загружает её через P/Invoke.
+
+Итого runtime:
+
+```text
+Still.exe
+Still.dll
+still_engine.dll
+Windows App SDK
+...
+```
+
+Для начала я бы собирал только:
+
+```text
+win-x64
+```
+
+Потом:
+
+```text
+win-arm64
+```
+
+Никакой причины сразу поддерживать четыре Windows architecture нет.
+
+---
+
+# 25. Ошибки через FFI
+
+Вот этого:
+
+```rust
+unwrap()
+expect()
+panic!()
+```
+
+на FFI boundary быть не должно.
+
+Лучше:
+
+```text
+StillResult
+
+OK
+INVALID_HANDLE
+GPU_INIT_FAILED
+SURFACE_FAILED
+DEVICE_LOST
+INVALID_PARAMETER
+INTERNAL_ERROR
+```
+
+И отдельно:
+
+```text
+still_get_last_error()
+```
+
+для текста.
+
+То есть:
+
+```text
+Rust internal Result<T, E>
+       ↓
+FFI boundary
+       ↓
+StillResult
+       ↓
+C#
+       ↓
+log / recovery UI
+```
+
+---
+
+# 26. Логи
+
+Я бы сделал единый logging pipeline:
+
+```text
+Rust tracing
+    │
+    ├── debugger output
+    └── log file
+
+C# logging
+    │
+    └── same session directory
+```
+
+Например:
+
+```text
+logs/
+2026-10-22_13-44-16/
+    windows.log
+    engine.log
+```
+
+Особенно полезно будет при будущих:
+
+```text
+AMD issue
+Intel issue
+DX12 issue
+surface lost
+shader compile problem
+```
+
+---
+
+# 27. Settings
+
+Не надо заставлять Rust читать Windows Registry или `%AppData%`.
+
+Rust:
+
+```text
+Preset {
+    scene
+    seed
+    parameters
+    quality
+}
+```
+
+Windows:
+
+```text
+SettingsService
+ ↓
+JSON/local settings
+```
+
+При запуске:
+
+```text
+C# reads settings
+        ↓
+passes config
+        ↓
+Rust Engine
+```
+
+Таким образом iOS позже хранит это через свои механизмы, Android — через свои, но формат preset остаётся общим.
+
+---
+
+# 28. Quality tiers
+
+Я бы не делал `Low / Medium / Ultra` просто ради галочки.
+
+Скорее:
+
+| Mode | Particles | Render Scale | Trails | Post FX |
+|---|---:|---:|---|---|
+| Efficiency | ~10k | 0.75–1.0 | basic | minimal |
+| Balanced | ~30–50k | 1.0 | full | normal |
+| Quality | ~100k+ | 1.0 | high precision | full |
+
+Но сначала вообще:
+
+```text
+Balanced only
+```
+
+А auto-quality появится позже.
+
+---
+
+# 29. Windows lifecycle
+
+Для ambient-приложения это важнее, чем кажется.
+
+```text
+active + visible
+→ full rendering
+
+inactive but visible
+→ optionally reduce FPS
+
+minimized
+→ stop rendering
+
+occluded
+→ stop/reduce
+
+battery saver
+→ optional lower quality
+
+resume
+→ restore timing
+
+display changed
+→ update DPI/HDR/surface
+```
+
+Это даст Still ощущение нормального приложения, а не GPU benchmark.
+
+---
+
+# 30. Fullscreen
+
+Fullscreen тоже должен делать **Windows layer**, а не Rust.
+
+Rust знает только:
+
+```text
+viewport = 3840 × 2160
+```
+
+Не знает:
+
+```text
+fullscreen = true
+```
+
+Windows через `AppWindow`/presenter управляет оконным режимом. WinUI `Window` и `AppWindow` оба работают поверх HWND-модели Windows. :chatgpt-content-reference{index="16"}
+
+---
+
+# 31. HDR
+
+Интересная вещь на будущее.
+
+Актуальный wgpu уже получил explicit surface color spaces и HDR/wide-gamut configuration, в том числе для DX12. :chatgpt-content-reference{index="17"}
+
+Для Glass/Ocean это может быть очень красиво.
+
+Но:
+
+**Still 0.1 → SDR.**
+
+HDR добавить после того, как:
+
+```text
+SDR
+60/120Hz
+resize
+DPI
+sleep/wake
+multi-monitor
+```
+
+работают идеально.
+
+---
+
+# 32. Что я бы зафиксировал прямо сейчас
+
+Итоговая Windows-архитектура:
+
+| Решение | Выбор |
+|---|---|
+| Language shell | C# |
+| Runtime | .NET 10 LTS |
+| UI | WinUI 3 |
+| Windows SDK layer | Windows App SDK |
+| Render host | `SwapChainPanel` |
+| Core | Rust |
+| GPU abstraction | wgpu |
+| Windows backend | DX12 |
+| Shaders | WGSL |
+| FFI | C ABI + P/Invoke |
+| C# bindings | csbindgen |
+| Frame callback v0.1 | `CompositionTarget.Rendering` |
+| Simulation | GPU compute |
+| UI rendering | XAML |
+| Scene rendering | wgpu |
+| Persistence | native shell |
+| Scene state | Rust |
+| Windows target initially | x64 |
+
+И я бы **не менял эту схему без конкретной проблемы**.
+
+Главное преимущество в том, что Windows-специфичным получается совсем небольшой кусок:
+
+```text
+        Windows
+
+WinUI ── SwapChainPanel
+ │             │
+ │             ▼
+ │      create wgpu surface
+ │
+ └──── input / lifecycle
+```
+
+А всё интересное:
+
+```text
+Drift
+Particles
+Noise
+Shaders
+Trails
+Postprocessing
+Scene System
+Parameter System
+Modulation
+```
+
+уже является **Still**, а не **Still.Windows**.
+
+Поэтому когда мы дойдём до macOS, архитектура должна превратиться примерно в `SwiftUI + Metal-backed wgpu surface → тот же Engine`, а не в переписывание проекта с нуля. Именно по этому признаку я бы и оценивал, хорошая у нас Windows-архитектура или нет.

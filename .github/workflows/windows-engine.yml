@@ -1,0 +1,24 @@
+name: Windows engine preparation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  engine:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install --no-self-update
+      - name: Check, build and load the x64 engine DLL
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+      - name: Verify the generated header and lockfile
+        shell: pwsh
+        run: git diff --exit-code -- include/still.h Cargo.lock

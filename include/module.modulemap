@@ -1,0 +1,4 @@
+module StillCoreFFI {
+    header "still.h"
+    export *
+}

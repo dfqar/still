@@ -1,0 +1,26 @@
+name: macOS Release
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-gates:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --no-self-update
+      - name: Rust, WGSL and Xcode release gates
+        run: cargo xtask check
+      - name: Verify the generated header and lockfile
+        run: git diff --exit-code -- include/still.h Cargo.lock
+      - name: Verify source packaging
+        run: python3 scripts/package-source.py --output build/Still-source.zip
